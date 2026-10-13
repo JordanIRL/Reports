@@ -273,9 +273,13 @@
     Jordan
 
 .VERSION
-    3.3.6
+    3.3.7
 
 .CHANGELOG
+    3.3.7 (2026-10-13) — an Administrative Templates policy Graph will not read in one call
+    (seen with imported ADMX, as an empty 400 Bad Request) is read setting by setting instead:
+    every readable setting is kept, and a warning names only the parts still unreadable. A
+    policy with no configured settings no longer shows an "(unknown ADMX setting)" row.
     3.3.6 (2026-10-11) — HTML and CSV filenames use minute precision for capture timestamps.
     3.3.5 (2026-10-11) — automatic HTML and CSV filenames identify the tenant, query or
     device scope, and capture time; browser CSV downloads also identify their report section.
@@ -455,10 +459,10 @@
     from being cached, honours explicit Graph context selectors, and fixes paging limits.
 
 .LASTUPDATE
-    2026-10-11
+    2026-10-13
 
 .NOTES
-    Version 3.3.6 (2026-10-11)
+    Version 3.3.7 (2026-10-13)
     Run with NO parameters for a guided interactive menu.
     Read-only: performs GET/report POST calls only; never modifies tenant data.
     Encrypted custom OMA-URI values are decrypted into the report - treat the export as sensitive.
@@ -531,7 +535,7 @@ param(
 
 Set-StrictMode -Off
 $ErrorActionPreference = 'Stop'
-$script:Version = '3.3.6'
+$script:Version = '3.3.7'
 $script:TemplateSchema = 5
 $script:StartTime = Get-Date
 $script:GraphThrottle = [math]::Max(1, [int]$ThrottleLimit)   # /$batch requests in flight at once
@@ -1351,6 +1355,71 @@ function Get-RsopCollection {
     param([hashtable]$Prefetched, [Parameter(Mandatory = $true)][string]$Url)
     if ($Prefetched -and $Prefetched.ContainsKey($Url)) { return $Prefetched[$Url] }
     return Get-RsopPaged -Uri ('beta' + $Url)
+}
+
+function Read-AdmxDefinitionValues {
+    # An Administrative Templates policy's definition values with their definitions and presentation
+    # values (labels included). The one-call read ($Url, usually prefetched through $batch) serves
+    # almost every policy, but Graph rejects it for some (seen with imported ADMX, with an empty 400).
+    # Then step down: the values with their definitions expanded, else plain; each missing definition
+    # and each value's presentation values on their own (batched); missing labels last. An
+    # unreadable part costs only that part. Throws the one-call read's error when not even the plain
+    # list can be read. Returns Items and Problems (the parts still missing, for the warning).
+    param([Parameter(Mandatory = $true)][string]$PolicyId, [Parameter(Mandatory = $true)][string]$Url,
+        [hashtable]$Prefetched, [string]$PolicyName)
+    try { return [pscustomobject]@{ Items = (Get-RsopCollection -Prefetched $Prefetched -Url $Url); Problems = @() } }
+    catch { $rejected = $_ }
+    $base = '/deviceManagement/groupPolicyConfigurations/{0}/definitionValues' -f $PolicyId
+    $items = $null
+    foreach ($u in @(($base + '?$expand=definition'), $base)) {
+        try { $items = @(Get-RsopPaged -Uri ('beta' + $u)); break } catch { }
+    }
+    if ($null -eq $items) { throw $rejected }
+    Add-RunLog -Level info -Message ("Graph would not read the ADMX values of '{0}' in one call ({1}); read them setting by setting." -f $PolicyName, (Format-RsopError $rejected))
+    $values = @($items | Where-Object { $_ -is [System.Collections.IDictionary] -and $_['id'] })
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $note = {
+        param($Value, [string]$What)
+        $n = [string](Get-Prop $Value['definition'] 'displayName')
+        $text = '{0} of {1}' -f $What, $(if ($n) { "'$n'" } else { "value $($Value['id'])" })
+        if (-not $problems.Contains($text)) { $problems.Add($text) }
+    }
+    $entity = { param($Body) (Remove-RsopKeys -Items @($Body) -Keys @('@odata.context'))[0] }
+
+    $want = @{}
+    foreach ($v in $values) { if ($v['definition'] -isnot [System.Collections.IDictionary]) { $want[('{0}/{1}/definition' -f $base, $v['id'])] = $v } }
+    if ($want.Count) {
+        $got = Invoke-RsopBatch -Urls @($want.Keys)
+        foreach ($u in $want.Keys) {
+            if ($got[$u] -is [System.Collections.IDictionary]) { $want[$u]['definition'] = & $entity $got[$u] }
+            else { & $note $want[$u] 'the definition' }
+        }
+    }
+
+    $want = @{}
+    foreach ($v in $values) { $want[('{0}/{1}/presentationValues' -f $base, $v['id'])] = $v }
+    $expanded = Get-RsopBatchedCollections -Urls @($want.Keys | ForEach-Object { $_ + '?$expand=presentation' })
+    $plainUrls = @($want.Keys | Where-Object { -not $expanded.ContainsKey($_ + '?$expand=presentation') })
+    $plain = $(if ($plainUrls.Count) { Get-RsopBatchedCollections -Urls $plainUrls } else { @{} })
+    $labels = @{}
+    foreach ($u in $want.Keys) {
+        $v = $want[$u]
+        if ($expanded.ContainsKey($u + '?$expand=presentation')) { $v['presentationValues'] = $expanded[$u + '?$expand=presentation']; continue }
+        if (-not $plain.ContainsKey($u)) { $v['presentationValues'] = @(); & $note $v 'the values'; continue }
+        $v['presentationValues'] = $plain[$u]
+        foreach ($pv in @($plain[$u])) {
+            if ($pv -is [System.Collections.IDictionary] -and $pv['id'] -and $pv['presentation'] -isnot [System.Collections.IDictionary]) { $labels[('{0}/{1}/presentation' -f $u, $pv['id'])] = @($pv, $v) }
+        }
+    }
+    if ($labels.Count) {
+        $got = Invoke-RsopBatch -Urls @($labels.Keys)
+        foreach ($u in $labels.Keys) {
+            $pv, $v = $labels[$u]
+            if ($got[$u] -is [System.Collections.IDictionary]) { $pv['presentation'] = & $entity $got[$u] }
+            else { & $note $v 'the labels' }
+        }
+    }
+    return [pscustomobject]@{ Items = $values; Problems = $problems.ToArray() }
 }
 
 function Get-RsopItemsWithAssignments {
@@ -2632,9 +2701,12 @@ function Convert-AdmxValues {
     # $DefinitionValues = items from groupPolicyConfigurations/{id}/definitionValues?$expand=...
     param($DefinitionValues)
     $rows = [System.Collections.Generic.List[object]]::new()
-    foreach ($dv in @($DefinitionValues)) {
+    # (a policy with no values arrives as $null, which is not a setting)
+    foreach ($dv in @($DefinitionValues | Where-Object { $null -ne $_ })) {
         $def = Get-Prop $dv 'definition'
         $defId = [string](Get-Prop $def 'id')
+        # a value whose definition could not be read keys on itself, never on a shared 'admx:'
+        if (-not $defId) { $defId = 'value:' + [string](Get-Prop $dv 'id') }
         $defName = [string](Get-Prop $def 'displayName')
         if (-not $defName) { $defName = '(unknown ADMX setting)' }
         $classType = [string](Get-Prop $def 'classType')
@@ -3054,7 +3126,7 @@ function Get-PolicyCorpus {
     if (-not $Refresh -and $CacheMinutes -gt 0 -and $null -ne $cached) {
         try {
             $age = (Get-Date) - [datetime]$cached.generated
-            $optionsMatch = $ver -eq 19 -and $null -ne $cached.cacheOptions -and
+            $optionsMatch = $ver -eq 20 -and $null -ne $cached.cacheOptions -and
                 [bool]$cached.cacheOptions.IncludeCompliance -eq $cacheOptions.IncludeCompliance -and
                 [bool]$cached.cacheOptions.IncludeUpdates -eq $cacheOptions.IncludeUpdates -and
                 [bool]$cached.cacheOptions.IncludeScripts -eq $cacheOptions.IncludeScripts -and
@@ -3366,8 +3438,14 @@ function Get-PolicyCorpus {
         $rows = @()
         $dv = @()
         try {
-            $dv = Get-RsopCollection -Prefetched $prefetched -Url ($valuesUrl -f $p['id'])
+            $read = Read-AdmxDefinitionValues -PolicyId ([string]$p['id']) -Url ($valuesUrl -f $p['id']) -Prefetched $prefetched -PolicyName $pname
+            $dv = $read.Items
             $rows = Convert-AdmxValues -DefinitionValues $dv
+            if ($read.Problems.Count) {
+                $gap = $read.Problems -join '; '
+                [void]$warnings.Add("Some ADMX values of '$pname' could not be read: $gap")
+                $p['@intuneLens.incomplete'] = "definition values partly readable: $gap"
+            }
         } catch {
             [void]$warnings.Add("Could not fetch ADMX values for '$pname': $(Format-RsopError $_)")
             $p['@intuneLens.incomplete'] = "definition values not readable: $(Format-RsopError $_)"
@@ -4101,7 +4179,7 @@ function Get-PolicyCorpus {
     foreach ($rp in $script:ReadProblems) { if (-not $warnings.Contains($rp)) { [void]$warnings.Add($rp) } }
 
     $corpus = [pscustomobject]@{
-        cacheVersion = 19
+        cacheVersion = 20
         cacheOptions = $cacheOptions
         generated    = (Get-Date).ToString('o')
         tenant       = $TenantKey

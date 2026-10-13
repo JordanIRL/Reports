@@ -2008,7 +2008,7 @@ function renderOverview(){
   const present=ORDER.filter(k=>cnt[k]);
   const caption=!isDev&&(scope==="group"||/^scope /i.test(g.OS||""))?g.OS:"";
   document.getElementById("tileStatus").innerHTML=head("Policy status","","",fmtN(pols.length)+" "+(pols.length===1?"policy":"policies"))+
-    (pols.length?'<div class="strata-bar" role="img" aria-label="'+esc(present.map(k=>cnt[k]+' '+KEY[k].toLowerCase()).join(', '))+'">'+present.map(k=>'<i style="flex:'+cnt[k]+' 1 0;background:'+SWATCH[k]+';cursor:pointer" onclick="applyStatus(\''+k+'\')" title="'+esc(KEY[k])+': '+cnt[k]+'"></i>').join('')+'</div>'+
+    (pols.length?'<div class="strata-bar" aria-hidden="true">'+present.map(k=>'<i style="flex:'+cnt[k]+' 1 0;background:'+SWATCH[k]+';cursor:pointer" onclick="applyStatus(\''+k+'\')" title="'+esc(KEY[k])+': '+cnt[k]+'"></i>').join('')+'</div>'+
       '<table class="legend"><tbody>'+present.map(k=>'<tr class="clickable" tabindex="0" role="button" onclick="applyStatus(\''+k+'\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();applyStatus(\''+k+'\')}"><td><span class="lg-name"><i class="sw" style="background:'+SWATCH[k]+'"></i>'+esc(KEY[k])+'</span></td><td class="num">'+fmtN(cnt[k])+'</td></tr>').join('')+'</tbody></table>'
       :'<div class="small">'+(FS.plat.size===1?"No "+esc(PLAT_NAV_LABEL[[...FS.plat][0]]||"")+" policies in this report.":"No policies in this report.")+'</div>')+
     (caption?'<div class="small" style="margin-top:10px">'+esc(caption)+'</div>':'');
@@ -2147,7 +2147,7 @@ function renderSettings(){
   const restrictOn=TS.restrict;
   const tb=document.querySelector("#tblSettings tbody");
   const frag=document.createDocumentFragment();
-  const shown=[]; let lastKey=null, i=0;
+  const shown=[]; let collapsedRows=0, lastKey=null, i=0;
   for(;i<rows.length;i++){
     const s=rows[i];
     if(groupBy){
@@ -2161,7 +2161,7 @@ function renderSettings(){
         tr.innerHTML='<td colspan="6"><span class="gchev" aria-hidden="true">'+(col?"▸":"▾")+'</span>'+esc(k||"(none)")+'<span class="gcount">'+gcount[k]+' setting'+(gcount[k]===1?"":"s")+'</span></td>';
         frag.appendChild(tr);
       }
-      if(grpCollapsed.has(k)) continue;
+      if(grpCollapsed.has(k)){ collapsedRows++; continue; }
     }
     if(shown.length>=settingsLimit) break;
     shown.push(s);
@@ -2184,7 +2184,7 @@ function renderSettings(){
   const more=document.getElementById("loadMoreSettings");
   more.style.display=remaining>0?"":"none";
   more.textContent="Load "+Math.min(200,remaining)+" more";
-  document.getElementById("rowCount").textContent="Showing "+shown.length+" of "+rows.length+" matching settings"+(groupBy?" · grouped by "+document.getElementById("groupBy").selectedOptions[0].textContent.toLowerCase():"")+" · select a row for policy and assignment context";
+  document.getElementById("rowCount").textContent="Showing "+shown.length+(collapsedRows?" (+"+collapsedRows+" in collapsed groups)":"")+" of "+rows.length+" matching settings"+(groupBy?" · grouped by "+document.getElementById("groupBy").selectedOptions[0].textContent.toLowerCase():"")+" · select a row for policy and assignment context";
 }
 
 /* ---------- policies -------------------------------------------------------------------------- */
@@ -2310,7 +2310,7 @@ function renderApps(){
     const aid=esc(a.AppId);
     const sub=[a.Type,a.Publisher,a.Version?'v'+a.Version:''].filter(Boolean).join(' · '), rep=a.Reported;
     const unknown=(a.Intents||[]).some(i=>!INTENT_ORDER.includes(i.Intent));
-    return '<tr class="app-table-row" data-aid="'+aid+'"><td data-label="App"><div class="app-title-line"><button type="button" class="app-inline-link app-name" data-app-action="details" data-app-id="'+aid+'" aria-label="View details for '+esc(a.Name)+'">'+hl(a.Name,q)+'</button>'+(sub?'<div class="app-sub">'+hl(sub,q)+'</div>':'')+(a.IntentConflict?'<span class="app-conflict-label">'+appIcon('alert')+' Competing intents</span>':'')+(a.ReplacedBy?'<span class="app-conflict-label" style="color:var(--red)">'+appIcon('alert')+' Replaced by '+esc(a.ReplacedBy)+'</span>':'')+(unknown?'<div class="app-sub">Additional intents in app details</div>':'')+'</div></td>'+
+    return '<tr class="app-table-row" data-aid="'+aid+'"><td data-label="App"><div class="app-title-line"><button type="button" class="app-inline-link app-name" data-app-action="details" data-app-id="'+aid+'" aria-label="View details for '+esc(a.Name)+'">'+hl(a.Name,q)+'</button>'+(sub?'<div class="app-sub">'+hl(sub,q)+'</div>':'')+(a.IntentConflict?'<span class="app-conflict-label">'+appIcon('alert')+' Competing intents</span>':'')+(a.ReplacedBy?'<span class="app-conflict-label" style="color:var(--danger-ink)">'+appIcon('alert')+' Replaced by '+esc(a.ReplacedBy)+'</span>':'')+(unknown?'<div class="app-sub">Additional intents in app details</div>':'')+'</div></td>'+
       '<td data-label="Required" class="ic">'+intentCell(a,'required',dev)+'</td>'+
       '<td data-label="Available" class="ic">'+appAvailableCell(a,dev)+'</td>'+
       '<td data-label="Uninstall" class="ic">'+intentCell(a,'uninstall',dev)+'</td>'+
@@ -2441,7 +2441,7 @@ function renderTenant(){
         '<td data-label="Assigned to" class="small"><div class="tn-cell-content">'+hl(it.Assignment||"",q)+'</div></td></tr>').join('')+'</tbody></table></div></div>';
   });
   const missing=gAll.filter(x=>x.Missing).length;
-  h+='<div class="card tn-sec" id="tn-groups"><div class="tn-sec-head"><h3>Groups used by Intune</h3><span class="small">'+(act?groups.length+' of '+gAll.length:gAll.length)+' group'+(gAll.length===1?'':'s')+(missing?' · <b style="color:var(--red)">'+missing+' deleted</b>':'')+'</span></div>'+
+  h+='<div class="card tn-sec" id="tn-groups"><div class="tn-sec-head"><h3>Groups used by Intune</h3><span class="small">'+(act?groups.length+' of '+gAll.length:gAll.length)+' group'+(gAll.length===1?'':'s')+(missing?' · <b style="color:var(--danger-ink)">'+missing+' deleted</b>':'')+'</span></div>'+
      '<div class="small tn-note">Every Entra group that an assignment, role, scope tag or enrollment setting points at, with its membership rule. Assignments reference groups by id: recreate a deleted group and every assignment to it has to be re-pointed.</div>'+
      (groups.length?'<div class="tblwrap"><table><thead><tr><th>Group</th><th>Membership</th><th>Rule</th><th>Used by</th></tr></thead><tbody>'+
        groups.map(({x,i})=>'<tr class="rowlink" tabindex="0" data-tn="g:'+i+'"><td data-label="Group"><div class="tn-cell-content">'+ident('<span class="linkish">'+hl(x.Name,q)+'</span>',x.Name,"group name")+(x.Missing?' <span class="badge b-excluded">Deleted</span>':'')+(x.Synced?' <span class="mt">synced from AD</span>':'')+'</div></td>'+
@@ -2503,19 +2503,19 @@ function openTenantInspector(key){
     const s=(T.Sections||[])[+parts[1]], it=s&&(s.Items||[])[+parts[2]]; if(!it) return;
     const head=paneHead(s.Area||"Tenant setup",esc(it.Name||"(unnamed)"),(it.State?'<span class="badge '+(HEALTH_CLASS[it.Health]||"b-dup")+'">'+esc(it.State)+'</span>':'')+(it.Kind?'<span class="mt">'+esc(it.Kind)+'</span>':''),"");
     let b=it.Note?'<div class="small" style="margin-top:8px">'+esc(it.Note)+'</div>':'';
-    const kv=[["State",it.State],["Expires",it.Expires],["Owner / contact",it.Owner],["Id",it.Id]].filter(x=>x[1]);
-    if(kv.length) b+='<h4>Details</h4><div class="kv">'+kv.map(x=>'<div class="k">'+esc(x[0])+'</div><div>'+esc(x[1])+'</div>').join('')+'</div>';
+    const kv=[["State",esc(it.State)],["Expires",esc(it.Expires)],["Owner / contact",esc(it.Owner)],["Id",it.Id?ident('<span class="mono">'+esc(it.Id)+'</span>',it.Id,"id"):""]].filter(x=>x[1]);
+    if(kv.length) b+='<h4>Details</h4><div class="kv">'+kv.map(x=>'<div class="k">'+esc(x[0])+'</div><div>'+x[1]+'</div>').join('')+'</div>';
     if((it.AssignmentDetail||[]).filter(Boolean).length||it.Assignment) b+='<h4>Assignments</h4>'+asgTable({AssignmentDetail:(it.AssignmentDetail||[]).filter(Boolean),Assignment:it.Assignment,Status:""});
     b+='<h4>Configuration ('+(it.Rows||[]).filter(Boolean).length+')</h4>'+tnRowsHtml(it.Rows);
     openInspector(head,b); return;
   }
   const isG=k==="g", x=(isG?(T.Groups||[]):(T.Filters||[]))[+parts[1]]; if(!x) return;
   const head=paneHead(isG?"Entra group":"Assignment filter",esc(x.Name),x.Missing?'<span class="badge b-excluded">Deleted</span>':'',"");
-  const kv=isG?[["Membership",x.Membership],["Members",x.MemberCount!=null&&x.MemberCount!==""?String(x.MemberCount):""],["Owners",(x.Owners||[]).join(", ")],["Rule processing",x.RuleState],["Source",x.Synced?"Synced from on-premises AD":"Cloud"],["Role-assignable",x.RoleAssignable?"Yes":""],["Created",fmtStamp(x.Created)],["Group id",x.Id]]
-             :[["Platform",filterPlatform(x.Platform)],["Applies to",filterKind(x.ManagementType)],["Last modified",fmtStamp(x.Modified)],["Filter id",x.Id]];
+  const kv=isG?[["Membership",esc(x.Membership)],["Members",x.MemberCount!=null&&x.MemberCount!==""?esc(String(x.MemberCount)):""],["Owners",esc((x.Owners||[]).join(", "))],["Rule processing",esc(x.RuleState)],["Source",x.Synced?"Synced from on-premises AD":"Cloud"],["Role-assignable",x.RoleAssignable?"Yes":""],["Created",esc(fmtStamp(x.Created))],["Group id",x.Id?ident('<span class="mono">'+esc(x.Id)+'</span>',x.Id,"group id"):""]]
+             :[["Platform",esc(filterPlatform(x.Platform))],["Applies to",esc(filterKind(x.ManagementType))],["Last modified",esc(fmtStamp(x.Modified))],["Filter id",x.Id?ident('<span class="mono">'+esc(x.Id)+'</span>',x.Id,"filter id"):""]];
   let b=x.Desc?'<div class="small" style="margin-top:8px">'+esc(x.Desc)+'</div>':'';
-  if(x.Missing) b+='<div class="small" style="margin-top:8px;color:var(--red)">The directory no longer has a group with this id. The assignments below point at nothing until they are re-pointed at a new group (restore it from the Entra recycle bin within 30 days to keep the id).</div>';
-  b+='<h4>Details</h4><div class="kv">'+kv.filter(v=>v[1]).map(v=>'<div class="k">'+esc(v[0])+'</div><div>'+esc(v[1])+'</div>').join('')+'</div>';
+  if(x.Missing) b+='<div class="small" style="margin-top:8px;color:var(--danger-ink)">The directory no longer has a group with this id. The assignments below point at nothing until they are re-pointed at a new group (restore it from the Entra recycle bin within 30 days to keep the id).</div>';
+  b+='<h4>Details</h4><div class="kv">'+kv.filter(v=>v[1]).map(v=>'<div class="k">'+esc(v[0])+'</div><div>'+v[1]+'</div>').join('')+'</div>';
   if(x.Rule) b+='<h4>'+(isG?'Membership rule':'Rule')+'</h4><div class="ival mono">'+esc(ruleText(x.Rule))+'</div>';
   const u=(x.UsedBy||[]).filter(Boolean);
   b+='<h4>Used by ('+u.length+')</h4>'+(u.length?'<div class="tblwrap"><table><thead><tr><th>Name</th><th>Type</th><th>'+(isG?'How':'Filter mode')+'</th></tr></thead><tbody>'+u.map(v=>'<tr><td>'+esc(v.Name)+'</td><td class="small">'+esc(v.Kind||"")+'</td><td class="small">'+esc(v.Mode||"")+'</td></tr>').join('')+'</tbody></table></div>':'<div class="small">Nothing references it.</div>');
@@ -3205,7 +3205,7 @@ function renderMatrix(){
   let appsStarted=false;
   document.querySelector("#tblMatrix tbody").innerHTML=rows.map(row=>{
     let heading="";
-    if(row.kind==="app"&&!appsStarted){ appsStarted=true; heading='<tr><td colspan="'+(cols+2)+'" style="background:var(--chip);font-weight:750">Apps</td></tr>'; }
+    if(row.kind==="app"&&!appsStarted){ appsStarted=true; heading='<tr><td colspan="'+(cols+2)+'" style="background:var(--canvas);font-weight:600">Apps</td></tr>'; }
     return heading+'<tr><th scope="row">'+esc(row.name)+'</th><td class="small">'+esc(row.kind==="app"?"App · "+(row.type||""):row.type)+'</td>'+
       DATA.devices.map((d,i)=>'<td style="text-align:center">'+(row.kind==="app"?appMatrixCell(row.states[i]):policyMatrixCell(row.states[i]))+'</td>').join("")+'</tr>';
   }).join("");
@@ -3487,10 +3487,12 @@ function renderAppConfigs(){
   }).join('')||'<tr class="empty-row"><td colspan="4"><div class="small">'+(all.length?'No app configurations match the current filters.':isDevScope()?'No app configuration policy targets this device. App configuration mostly applies to iOS / iPadOS and Android apps; run the script with -All to list every configuration policy in the tenant.':'No app configuration policies were returned for this scope (or app policies were skipped with -SkipAppPolicies).')+'</div>'+(filtersActive(st)?'<button class="app-inline-link" type="button" data-config-action="reset">Clear all filters</button>':'')+'</td></tr>';
   document.getElementById('configCount').textContent=rows.length+' of '+all.length+' app configurations shown. Select a policy name for details or Show settings to read and copy its settings.';
 }
-function openConfigInspector(pid){
-  const p=POLBYID[pid]; if(!p) return;
+function openConfigInspector(keyPid){
+  const p=POLBYID[keyPid]; if(!p) return;
   const head=paneHead("App configuration policy",esc(p.Name),stBadge(p),esc(p.FamilyLabel));
-  openInspector(head,'<h4>Targeted apps</h4><p>'+(p.TargetApps||[]).map(t=>esc(t.Name||t.AppId)).join(' · ')+'</p><h4>Assignments</h4>'+configCopyButton(pid,'assignments',null,'Copy assignments for '+p.Name,false)+asgTable(p)+'<h4>Configuration</h4>'+configSettingsTable(p)+'<h4>Policy id</h4><div class="small mono">'+esc(pid)+'</div>');
+  const apps=(p.TargetApps||[]).filter(Boolean);
+  const appsHtml=apps.length?'<ul class="plist">'+apps.map(t=>'<li>'+(t.AppId&&APPBYID[t.AppId]?'<button type="button" class="linkish" onclick=\'openAppInspector('+JSON.stringify(String(t.AppId))+')\'>'+esc(t.Name||t.AppId)+'</button>':esc(t.Name||t.AppId))+'</li>').join('')+'</ul>':'<div class="none">No app identifiers returned</div>';
+  openInspector(head,'<h4>Targeted apps</h4>'+appsHtml+'<div class="sec-head"><h4>Assignments</h4>'+configCopyButton(keyPid,'assignments',null,'Copy assignments for '+p.Name,false)+'</div>'+asgTable(p)+'<h4>Configuration</h4>'+configSettingsTable(p)+'<h4>Policy id</h4><div class="small mono">'+ident(esc(keyPid),keyPid,"policy id")+'</div>');
   document.getElementById('insp').classList.add('config-inspector');
 }
 function initAppConfigs(){
@@ -3535,7 +3537,7 @@ function primaryFilterIds(tab) {
 
 function advancedFilterIds(tab) {
     const primary = primaryFilterIds(tab);
-    return ["grp", "flt", "mod", "cat", "pol", "atype", "int", "fam", "stat"].filter(id => !primary.includes(id) && FACET_BY_ID[id].tabs.includes(tab) && facetHasValues(FACET_BY_ID[id]));
+    return ["plat", "grp", "flt", "mod", "cat", "pol", "atype", "int", "fam", "stat"].filter(id => !primary.includes(id) && FACET_BY_ID[id].tabs.includes(tab) && facetHasValues(FACET_BY_ID[id]));
   }
 
 function filterKindWord(kind) {
